@@ -1,2 +1,2 @@
 # Churn Classification
-The goal of this project is to practice using classification techniques on a CHURN dataset to predict whether or not a customer is going to leave a service. This project is intended both as a portfolio project and an oppertunity to learn how to handle this kind of dataset and problem. 
+The goal of this project is to practice using classification techniques on a CHURN dataset to predict whether or not a customer is going to leave a service. This project is intended both as a portfolio project and an oppertunity to learn how to handle this kind of dataset and problem. Overall goal is to reach at least 90% accuracy through data cleaning, using different models, hyper tuning etc.
