@@ -1,0 +1,90 @@
+---
+title: "Project 1 158"
+author: "Tesfa Asmara and Kevin Loun"
+date: "2/20/2022"
+output:
+  bookdown::pdf_document2:
+    extra_dependencies: ["float"]
+bibliography: references.bib
+---
+```{r, include=FALSE}
+library(magrittr) # needs to be run every time you start R and want to use %>%
+library(dplyr)    # alternatively, this also loads %>%
+library(tidyverse)
+library(janitor)
+library(ggridges)
+library(ggplot2)
+library(skimr)
+knitr::opts_chunk$set(fig.pos="H", out.extra="")
+lol10 <- read_csv('training_data.csv')
+lol10 <- clean_names(lol10)
+library(patchwork)  # to get the plots next to one another
+```
+
+# Introduction
+The dataset for this project contains 10,000 League of Legends ranked matches from the North American region with 775 variables offered through the Riot Games API, provided on Kaggle [@riot][@james_2020]. Each match is pulled from players who rank Gold in the League system, a ranking system that matches players of a similar skill level to play with and against each other. Amongst North American players, the Gold skill level was the second most common tier, achieved by 27.7 percent of players, or approximately 49.86 million players when considered against Riot Games' player base of 180 million [@statista_2021][@riot_tweet]. This dataset will be referred to as $\texttt{lol10}$.
+
+For this project, the following variables are of interest: lane, champion, map side, first summoner spell, kills, deaths, gold earned, and total damage dealt. A figure including all the relevant variables and their description is attached at the end.
+
+# Hypothesis
+We consider the following research question: Does the amount of gold earned have an effect on the total damage dealt for the average Gold-ranked player on the blue team? We want to describe the relationship between the gold earned and the total damage dealt on the blue team in the $\texttt{lol10}$ dataset using a line. We will use the gold earned across all summoners on the blue team as the predictor variable, $x$, to predict the total damage dealt across all summoners on the blue team, $y$. In Figure \@ref(fig:xyplot), we observe the nonlinearity of the regression model and the nonconstancy of the error terms.
+
+```{r xyplot, fig.cap = "A scatterplot and residual plot showing gold earned against total damage dealt on the blue team for 10,000 Gold-ranked matches",echo=FALSE}
+lol10 <- lol10 %>%
+  mutate(b_total_damage_dealt = b_summoner1_total_damage_dealt + b_summoner2_total_damage_dealt + b_summoner3_total_damage_dealt + b_summoner4_total_damage_dealt + b_summoner5_total_damage_dealt)
+lol10 <- lol10 %>%
+  mutate(b_gold_earned = b_summoner1_gold_earned + b_summoner2_gold_earned + b_summoner3_gold_earned + b_summoner4_gold_earned + b_summoner5_gold_earned)
+
+XY <- lol10 %>%
+  ggplot(aes(x=b_gold_earned,y=b_total_damage_dealt))+
+  geom_point()+
+  labs(x = "Gold earned", y="Total damage dealt")
+
+lolmodel <- lm(b_total_damage_dealt ~ b_gold_earned, data = lol10)
+RXY<-lolmodel %>%
+  ggplot(aes(x=lolmodel$fitted.values ,y= lolmodel$residuals))+
+  geom_point()+
+  labs(x = "Predicted values of total damage dealt", y="Residuals") + geom_hline(yintercept=0, linetype="dashed", color = "red")
+
+XY+RXY
+```
+
+If we apply a log transformation to both the predictor and outcome variable, a positive association between the variables is revealed.
+
+```{r , fig.cap = "A scatterplot and residual plot for the log-log-transformed model predicting total damage dealt from gold earned on the blue team for 10,000 Gold-ranked matches.",echo=FALSE}
+LogXY<-lol10 %>%
+  ggplot(aes(x=log(b_gold_earned),y=log(b_total_damage_dealt)))+
+  geom_point()+
+  labs(x = "log(Gold earned)", y="log(Total damage dealt)")
+
+loglolmodel <- lm(log(b_total_damage_dealt) ~ log(b_gold_earned), data = lol10)
+RLogXY<-loglolmodel %>%
+  ggplot(aes(x=loglolmodel$fitted.values ,y= loglolmodel$residuals))+
+  geom_point()+
+  labs(x = "log(Predicted values of total damage dealt)", y=" Residuals") + geom_hline(yintercept=0, linetype="dashed", color = "red")
+LogXY+RLogXY
+```
+
+Next, we consider $H_0$. In this case, we have: $H_0:\beta_1 = 0$ and $H_a:\beta_1 \neq 0.$ The 95% confidence interval for $\beta_1$ is $(`r confint(loglolmodel)[2,1]`, `r confint(loglolmodel)[2,2]`)$; this means that we are 95% confident that $\beta_1$ is in this range. Since the confidence interval for $\beta_1$ does not contain 0, it can be concluded that there is evidence of a linear relationship between the $\log(\text{gold earned})$ and the $\log(\text{total damage dealt})$ for the blue team.
+
+# Assessment 
+We can quantify the strength of this linear relationship by computing the coefficient of determination, $R^2 =$ `r summary(loglolmodel)$r.squared`, to describe the amount of variation in the outcome variable that is explained by the least squares line; there was a reduction of `r summary(loglolmodel)$r.squared*100`% of the outcome variable's variation by using information about $\log(\text{gold earned})$ for predicting the $\log(\text{total damage dealt})$ for the blue team using a linear model.
+
+We can now choose to look at the confidence intervals for the mean and individual response at gold earned = `r median(log(lol10$b_gold_earned))`, which is the median of our possible values for $\log(\text{gold earned})$. We found that the confidence interval for the mean response and individual response is (`r broom::augment(loglolmodel, newdata = data.frame(b_gold_earned=median(log(lol10$b_gold_earned))), interval = "confidence")$.lower`, `r broom::augment(loglolmodel, newdata = data.frame(b_gold_earned=median(log(lol10$b_gold_earned))), interval = "confidence")$.upper`) and (`r broom::augment(loglolmodel, newdata = data.frame(b_gold_earned=median(log(lol10$b_gold_earned))), interval = "prediction")$.lower`, `r broom::augment(loglolmodel, newdata = data.frame(b_gold_earned=median(log(lol10$b_gold_earned))), interval = "prediction")$.upper`), respectively. This means that we are 95% confident that our true $\log(\text{total damage dealt})$ lies within this interval.
+
+# Conclusion
+For the $\texttt{lol10}$ data, we could write the equation of the least squares regression line as
+
+<p align="center">
+    $\hat{\log(\text{total damage dealt})} =$ `r loglolmodel$coefficients[1]` + `r loglolmodel$coefficients[2]` $\times \log(\text{gold earned})$
+</p>
+
+This models our belief that multiplicative change in the predictor variable is associated with multiplicative change in the outcome variable. In this case, $\beta_1$ = `r loglolmodel$coefficients[2]`. Hence, a one-percent increase in gold earned is associated with a `r loglolmodel$coefficients[2]` percent change in total damage dealt.
+
+![Variables and their descriptions](./Variables_and_their_descriptions.pdf)
+
+# Bibliography {-}
+\setlength{\parindent}{-0.2in}
+\setlength{\leftskip}{0.2in}
+\noindent
+<div id="refs"></div>

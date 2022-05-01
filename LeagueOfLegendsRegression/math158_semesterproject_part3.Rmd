@@ -1,0 +1,408 @@
+---
+title: "Project 3 158: Multiple Linear Regression"
+author: "Tesfa Asmara and Kevin Loun"
+date: "4/09/2022"
+output:
+  bookdown::pdf_document2:
+    extra_dependencies: ["float"]
+bibliography: references.bib
+---
+```{r, include=FALSE}
+library(broom)
+library(magrittr) # needs to be run every time you start R and want to use %>%
+library(dplyr)    # alternatively, this also loads %>%
+library(tidyverse)
+library(janitor)
+library(ggridges)
+library(ggplot2)
+library(skimr)
+knitr::opts_chunk$set(fig.pos="H", out.extra="")
+library(patchwork)  # to get the plots next to one another
+library(rsample)
+library(GGally)
+library(equatiomatic)
+library(parsnip)
+library(recipes)
+library(workflows)
+library(resample)
+library(tidymodels)
+library(gghighlight)
+library(ggrepel)
+library(car)
+library(MASS)
+library(olsrr)
+```
+
+# Introduction
+League of Legends, abbreviated as LOL, is a multiplayer online battle arena video game
+developed and published by Riot Games. It is a popular video games that released in 2009. In LOL, there are two teams of five players. The two teams battle against each other in the
+Summoner's Rift, one of the possible maps. The goal is to be the first to destroy the opposing team’s “Nexus”, a structure located in the heart of each teams’ base and protected by defensive towers. There are hundreds of champions with unique abilities for players to choose from and use to form various team compositions based on their strategies. Some of the unique abilities of the champions can be classified as crowd control. Crowd control, commonly shortened to CC, is a blanket term used in League of Legends to describe abilities or spells that remove or diminish the control a target unit has over aspects of itself, including being able to cast spells and issue movement or attack commands. As crowd control effects impact a unit's combat ability, they are essentially more specialized forms of debuffs, a status effect given to a champion, minion, or monster that negatively impacts their combat performance in some way. However, this ability to directly hinder a unit's ability to fight means that crowd control effects are often given significantly more importance in regular gameplay than normal debuffs, resulting in their special classification. Commonly, players collect gold by killing enemies, killing minions, or destroying turrets. Players can use the gold earned to purchase more powerful items and, thus, gain advantages in the following team fights.
+
+The dataset for this project contains 10,000 League of Legends ranked matches from the North American region with 775 variables offered through the Riot Games API, provided on Kaggle [@riot][@james_2020]. Each match is pulled from players who rank Gold in the League system, a ranking system that matches players of a similar skill level to play with and against each other. Amongst North American players, the Gold skill level was the second most common tier, achieved by 27.7 percent of players, or approximately 49.86 million players when considered against Riot Games' player base of 180 million [@statista_2021][@riot_tweet]. This dataset will be referred to as $\texttt{lol10}$.
+
+For this project, the following variables are of interest: time spent crowd controlling others, longest time spent living, kills, gold earned, and total damage dealt. A figure including all the relevant variables and their description is attached at the end.
+
+# Hypothesis
+We consider the following research question: Can we better understand the total damage dealt for the average Gold-ranked player on the blue team? 
+
+A single predictor variable in the model would provide an inadequate description since a number of key variables affect `b_total_damage_dealt` in important and distinctive ways. Furthermore, in situations of this type, we frequently find that predictions of the response variable based on a model containing only a single predictor variable are too imprecise to be useful. A more complex model, containing additional predictor variables `b_gold_earned, b_kills, b_longest_time_spent_living,` and `b_time_c_cing_others`, typically is more helpful in providing sufficiently precise predictions of the response variable. The method is motivated by scenarios where many variables may be simultaneously connected to an output.
+
+# Feature Engineering
+```{r echo = FALSE}
+# Read in the data
+lol10 <- read_csv(show_col_types = FALSE, 'training_data.csv')
+lol10 <- clean_names(lol10)
+
+# Manipulate the data to extract the information we're interested in
+lol10 <- lol10 %>%
+  mutate(b_total_damage_dealt = b_summoner1_total_damage_dealt + b_summoner2_total_damage_dealt + b_summoner3_total_damage_dealt + b_summoner4_total_damage_dealt + b_summoner5_total_damage_dealt)
+lol10 <- lol10 %>%
+  mutate(b_gold_earned = b_summoner1_gold_earned + b_summoner2_gold_earned + b_summoner3_gold_earned + b_summoner4_gold_earned + b_summoner5_gold_earned)
+lol10 <- lol10 %>%
+  mutate(b_kills = b_summoner1_kills + b_summoner2_kills + b_summoner3_kills + b_summoner4_kills + b_summoner5_kills) 
+lol10 <- lol10 %>%
+  mutate(b_longest_time_spent_living = b_summoner1_longest_time_spent_living + b_summoner2_longest_time_spent_living + b_summoner3_longest_time_spent_living + b_summoner4_longest_time_spent_living + b_summoner5_longest_time_spent_living)
+lol10 <- lol10 %>%
+  mutate(b_time_c_cing_others = b_summoner1_time_c_cing_others + b_summoner2_time_c_cing_others + b_summoner3_time_c_cing_others + b_summoner4_time_c_cing_others + b_summoner5_time_c_cing_others)
+
+lol10 <- lol10 %>% dplyr::select(b_total_damage_dealt, b_gold_earned, b_kills, b_longest_time_spent_living, b_time_c_cing_others)
+
+# Separate the data for training and testing
+set.seed(4747)
+lol10_split <- initial_split(lol10) 
+lol10_train <- training(lol10_split)
+lol10_test  <- testing(lol10_split)
+
+# pairs plot
+ggpairs(lol10_train)
+```
+For $n$ = `r length(lol10_train$b_total_damage_dealt)` observations, Table B.6 in ALSM is employed to assess whether or not the magnitude of the correlation coefficient supports the reasonableness of the normality assumption. The feature engineering we conducted was minimal. Before partitioning into the two models, we began by summing over the explanatory variables for the five players on the blue side team to obtain statements about the explanatory variables for the blue side team as a whole. Then, we removed all zero variance predictors from the model as they do not impact our prediction for `b_total_damage_dealt`.
+
+# Interaction Variables
+```{r echo = FALSE}
+lol10_lm <- lm(b_total_damage_dealt ~ b_gold_earned + b_kills + b_longest_time_spent_living + b_time_c_cing_others, data=lol10_train)
+lol10_i_lm <- lm(b_total_damage_dealt ~ b_gold_earned + b_kills + b_longest_time_spent_living + b_time_c_cing_others + b_gold_earned:b_kills + b_gold_earned:b_longest_time_spent_living + b_gold_earned:b_time_c_cing_others + b_kills:b_longest_time_spent_living + b_kills:b_time_c_cing_others + b_longest_time_spent_living:b_time_c_cing_others, data=lol10_train)
+```
+We wish to test formally in the `lol10` dataset whether interaction terms between the four explanatory variables should be included in the regression model. We therefore need to consider the following regression model: `r extract_eq(lol10_i_lm, wrap = TRUE, terms_per_line = 1, intercept = "beta")`.
+
+We wish to test whether any interaction terms are needed. The test alternatives are: $H_0: \beta_5 = \beta_6 = \beta_7 = \beta_8 = \beta_9 = \beta_{10} = 0$ and $H_a: \text{not all }\beta \text{s in } H_0 \text{ are zero}$. We do so by performing a partial F-test by fitting both the reduced and full models separately and thereafter comparing them using the `anova()` function. 
+```{r, echo=FALSE}
+results <- anova(lol10_lm, lol10_i_lm)
+```
+Since $F \approx$ `r unlist(results["F"])[2]` (p-value $\approx$ `r unlist(results["Pr(>F)"])[2]`), we reject the null hypothesis $H_0: \beta_5 = \beta_6 = \beta_7 = \beta_8 = \beta_9 = \beta_{10} = 0$ at the $\alpha = 0.05$ level of significance. This means that the interaction terms do not contribute significant information to the `b_total_damage_dealt` once the explanatory variables `b_gold_earned, b_kills, b_longest_time_spent_living,` and `b_time_c_cing_others` have been taken into consideration.
+
+# Computational Model
+As mentioned in the introduction, one way that players collect gold is by killing enemies. Players can use the gold that they earn to purchase more items. These items are choosen such that they synergize with and enchance the champions and abilities so as to favor some strategy. A common strategy that is employed is to use the gold that a player earns to buy powerful items that increase the amount of damage your champion can deal. From highlight clips of gameplay, time spent CCing others may affect the amount of damage your champion can deal. This is because the ability to directly hinder a unit's ability to fight makes it easier not only for the player that has casted that ability to sequence a chain of further actions in the time that the affected player is unable to act, but also for that player's teammates follow up with their own actions. Hence, from our domain experience, we consider the following parsiminous models: `r extract_eq(lm(b_total_damage_dealt ~ b_gold_earned + b_kills, data = lol10_train), wrap = TRUE, terms_per_line = 2, intercept = "beta")` and `r extract_eq(lm(b_total_damage_dealt ~ b_gold_earned + b_kills + b_longest_time_spent_living, data = lol10_train), wrap = TRUE, terms_per_line = 2, intercept = "beta")`.
+```{r, echo=FALSE}
+lol10_spec <- linear_reg() %>%
+  set_engine("lm")
+
+lol10_rec1 <- recipe(b_total_damage_dealt ~ b_gold_earned + b_kills, data = lol10_train) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_zv(all_predictors())
+
+lol10_rec2 <- recipe(b_total_damage_dealt ~ b_gold_earned + b_kills + b_longest_time_spent_living, data = lol10_train) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_zv(all_predictors())
+
+lol10_wflow_1 <- workflow() %>%
+  add_model(lol10_spec) %>%
+  add_recipe(lol10_rec1)
+lol10_wflow_2 <- workflow() %>%
+  add_model(lol10_spec) %>%
+  add_recipe(lol10_rec2)
+
+set.seed(47)
+folds <- vfold_cv(lol10_train, v = 5)
+
+lol10_comp_fit_rs_1 <- lol10_wflow_1 %>%
+  fit_resamples(folds)
+
+lol10_comp_fit_rs_2 <- lol10_wflow_2 %>%
+  fit_resamples(folds)
+
+cv_metrics1 <- collect_metrics(lol10_comp_fit_rs_1, summarize = FALSE)
+cv_metrics2 <- collect_metrics(lol10_comp_fit_rs_2, summarize = FALSE)
+
+cv_metrics1_summary <- cv_metrics1 %>%
+  filter(.metric == "rmse") %>%
+  summarise(
+    min = min(.estimate),
+    max = max(.estimate),
+    mean = mean(.estimate),
+    sd = sd(.estimate)
+  )
+
+cv_metrics2_summary <- cv_metrics2 %>%
+  filter(.metric == "rmse") %>%
+  summarise(
+    min = min(.estimate),
+    max = max(.estimate),
+    mean = mean(.estimate),
+    sd = sd(.estimate)
+  )
+
+lol10_train_summary <- lol10_train %>%
+  summarise(
+    min = min(b_total_damage_dealt),
+    max = max(b_total_damage_dealt),
+    mean = mean(b_total_damage_dealt),
+    sd = sd(b_total_damage_dealt)
+  )
+```
+In comparing which model is better, the CV RMSE provides information on how well the model did predicting each $1/v$, where $v = \text{the number of folds}$, hold out sample. We can compare the model RMSE to the original variability seen in the `b_total_damage_dealt` variable. The original variability (measured by standard deviation) of `b_total_damage_dealt` was `r lol10_train_summary$sd`. After running Model 1, the remaining variability (measured by RMSE averaged over the folds) is `r cv_metrics1_summary$sd`; after running Model 2, the remaining variability (measured by RMSE averaged over the folds) is `r cv_metrics2_summary$sd`. Hence, the better computational model is `r extract_eq(lm(b_total_damage_dealt ~ b_gold_earned + b_kills, data = lol10_train), wrap = TRUE, terms_per_line = 2, intercept = "beta")`.
+```{r echo = FALSE}
+reg_summary <- summary(leaps::regsubsets(b_total_damage_dealt ~ b_gold_earned + b_kills + b_longest_time_spent_living + b_time_c_cing_others, data=lol10_train))
+```
+# Statistical Model
+For the four predictors in the `lol10` data, we know there are $2^4 = 16$ possible models. The adjusted coefficient of multiple determination, $R^2_{a, p}$, criterion identifies several subsets of variables for which $R^2_{a, p}$ is high. When using $R^2_{a_,p}$ as the decision criterion, we seek to eliminate or add variables depending on whether they lead to the largest improvement in $R^2_{a_,p}$ and we stop when adding or elimination of another variable does not lead to further improvement in $R^2_{a_,p}$. By this process, the four-parameter model `r extract_eq(lol10_lm, wrap = TRUE, terms_per_line = 2, intercept = "beta")` is identified as best; it has $\texttt{max}(R^2_{a, p}) =$ `r max(reg_summary$adjr2)` and will serve as the selected model. 
+
+# $R^2$ and $R^2_{a,p}$
+```{r fig.cap = "R-squared and R-Squared Adjusted", echo = FALSE}
+var(lol10$b_total_damage_dealt)
+selected_lm <- lm(b_total_damage_dealt ~ b_gold_earned + b_kills + b_longest_time_spent_living + b_time_c_cing_others, data = lol10_test)
+
+test_results <- selected_lm %>%
+  glance()
+```
+The coefficient of multiple determination, denoted by $R^2$, of a linear model measures the proportionate reduction of total variation in `b_total_damage_dealt` associated with the use of the
+set of variables `b_gold_earned, b_kills, b_longest_time_spent_living,` and `b_time_c_cing_others`. $R^2_{a, p}$ adjusts $R^2$ for the number of variables in the model by dividing each sum of squares by its associated degrees of freedom. $R^2$ is a biased estimate of the amount of variability explained by the model when applied to model with more than one predictor. To get a better estimate, we use $R^2_{a, p}$. $R^2_{a, p}$ describes the strength of a model fit, and it is a useful tool for evaluating which predictors are adding value to the model, where adding value means they are (likely) improving the accuracy in predicting future outcomes.
+
+Calculated from the test data, the linear model we selected has $R^2$ = `r test_results$r.squared` and $R^2_{a, p}$ = `r test_results$adj.r.squared`. This means that `r (test_results$r.squared)*100`% of the variability in `b_total_damage_dealt` for players who rank Gold in the North American region is explained by the variables `b_gold_earned, b_kills, b_longest_time_spent_living, b_time_c_cing_others`.
+
+# Intepretation of the Coefficients
+The parameters $\beta_0, \beta_1, \beta_2, \beta_3, \beta_4$ are sometimes called partial regression coefficients because they reflect the partial effect of one predictor variable when the other predictor variable is included in the model and is held constant. Let us now consider the meaning of the regression coefficients in the selected model. 
+
+The parameter $\beta_0 =$ `r selected_lm$coefficients[1]` is the $Y$-intercept of the regression plane. If the scope of the model includes $X_1 = X_2 = X_3 = X_4 = 0$, then $\beta_0 =$ `r selected_lm$coefficients[1]` represents the mean response $\mathbb{E}\{$`b_total_damage_dealt`$\}$ at `b_gold_earned` = `b_kills` = `b_longest_time_spent_living` = `b_time_c_cing_others` = 0. Otherwise, $\beta_0$ does not have any particular meaning as a separate term in the regression model. The parameter $\beta_1$ indicates the change in the mean response $\mathbb{E}\{$`b_total_damage_dealt`$\}$ per unit increase in `b_gold_earned` when `b_kills`, `b_longest_time_spent_living`, and `b_time_c_cing_others` is held constant. Likewise, $\beta_2$, $\beta_3$, $\beta_4$ indicates the change in the mean response per unit increase in `b_kills` when `b_gold_earned`, `b_longest_time_spent_living`, and `b_time_c_cing_others` is held constant, `b_longest_time_spent_living` when `b_gold_earned`, `b_kills`, and `b_time_c_cing_others` is held constant, and `b_time_c_cing_others` when `b_gold_earned`, `b_kills`, and `b_longest_time_spent_living` is held constant, respectively.
+
+We can evaluate our coefficients based on their p-value to determine if they are significant. Upon closer inspection it appears that `b_longest_time_spent_living` and `b_time_c_cing_others` are not significant in our final model. They have p-values of 0.208 and 0.608, respectively. At the $\alpha = 0.05$ significance level, these coefficients are not significant. However, `b_gold_earned` and `b_kills` are significant as they have p-values lower than our signifance level.  
+```{r, echo=FALSE, eval=FALSE}
+summary(selected_lm)%>%
+  tidy()
+```
+
+# Analysis of Residuals and Leverage
+```{r fig.cap = "Studentized Residual Plot", echo = FALSE}
+selected_lm %>%
+   augment() %>%
+  ggplot(aes(x = .fitted, y = .resid/sqrt(mean(selected_lm$residuals^2)))) +
+  geom_point(size = .8, color = "blue")+
+  geom_hline(yintercept = 0, color = "red") +
+  gghighlight(abs(.resid/sqrt(mean(selected_lm$residuals^2))) >= 4) +
+  xlab(".fitted") + ylab("semistudentized residuals")
+
+selected_lm_augment <- selected_lm %>% augment() %>%
+  dplyr::select(.resid, .hat, .cooksd, .std.resid) %>%
+  bind_cols(rstudent = selected_lm %>% rstudent())  %>%
+  bind_cols(dffits = selected_lm %>% dffits()) %>%
+  bind_cols(dfbetas = selected_lm %>% dfbetas())
+
+outliers_count <- 0
+
+for (i in 1:nrow(selected_lm_augment)) {
+  if (selected_lm_augment$.resid[i]/sqrt(mean(selected_lm$residuals^2)) >= 4) {
+      outliers_count <- outliers_count + 1
+  }
+}
+outliers_count
+```
+Plotting of semistudentized residuals is particularly helpful for distinguishing outlying observations, since it then becomes easy to identify residuals that lie many standard deviations from zero. A rough rule of thumb when the number of cases is large is to consider semistudentized residuals with absolute value of four or more to be outliers. By this rule of thumb, about `r outliers_count/length(lol10_test$b_total_damage_dealt)*100`% of the cases are outliers. We discuss other tests to aid in evaluating outliers.
+```{r fig.cap = "Left: Leverage Scatter Plot; Middle: Studentized Scatter Plot; Right: Outlier Scatter Plot", echo = FALSE}
+
+
+resid_outlier <- selected_lm %>%
+   augment() %>%
+  ggplot(aes(x = .hat, y = .std.resid)) + 
+  geom_point(size = .8, color = "blue") +
+  geom_hline(yintercept = 0) +
+  gghighlight(.std.resid > 2 | .std.resid < -2) 
+
+p <- length(selected_lm$coefficients)
+n <- length(lol10_test$b_total_damage_dealt)
+
+resid_leverage <- selected_lm %>%
+   augment() %>%
+  ggplot(aes(x = .hat, y = .std.resid)) + 
+  geom_point(size = .8, color = "red")+
+  geom_hline(yintercept = 0) +
+  gghighlight(.hat > 2*p/n) 
+
+outliers <- selected_lm %>%
+   augment() %>%
+  ggplot(aes(x = .hat, y = .std.resid)) + 
+  geom_point(size = .8, color = "purple")+
+  geom_hline(yintercept = 0) +
+  gghighlight(.hat > 2*p/n & (.std.resid > 2 | .std.resid < - 2)) 
+
+resid_leverage + resid_outlier + outliers
+
+resid_prop <- selected_lm %>%
+   augment() %>%
+  filter(.std.resid > 2 | .std.resid < -2)
+
+leverage_prop <- selected_lm %>%
+  augment() %>%
+  filter(.hat > 2*p/n)
+
+outliers_prop <- selected_lm %>%
+   augment() %>%
+  filter(.hat > 2*p/n & (.std.resid > 2 | .std.resid < - 2))
+```
+The diagonal elements, $h_{ii}$, of the hat matrix are a measure of the distance between the `b_gold_earned, b_kills, b_longest_time_spent_living,` and `b_time_c_cing_others` values for the $i$th case and the means of the `b_gold_earned, b_kills, b_longest_time_spent_living,` and `b_time_c_cing_others` values for all $n$ cases. A leverage value $h_{ii}$ is usually considered to be large if it is more than twice as large as the mean leverage value, denoted by $\bar{h} = \frac{p}{n}$. Approximately `r length(leverage_prop$b_total_damage_dealt)/length(lol10_test$b_total_damage_dealt)*100`% of the cases have leverage values above the cut-off leverage of `r 2*p/n`. Additionally, about `r length(resid_prop$b_total_damage_dealt)/length(lol10_test$b_total_damage_dealt)*100`% of the cases have studentized residuals $e_i^* \notin (-2,2)$ and none of the cases have studentized residuals $e_i^* > 10$. We identify that about `r length(outliers_prop$b_total_damage_dealt)/length(lol10_test$b_total_damage_dealt)*100`% of the cases are outlying with respect to their Y values and their X values. 
+
+```{r, echo=FALSE}
+# Visualize cut-offs for various measures of influence
+dffitsplot <- selected_lm_augment %>%
+  filter(.hat > 2*p/n & (.std.resid > 2 | .std.resid < - 2))  %>%
+  ggplot(aes(x = .hat, y = dffits)) + 
+  geom_point(size = .8, color = "blue") +
+  geom_hline(yintercept = 0) +
+  gghighlight(abs(dffits) > 2*sqrt(p/n)) 
+cooksdplot <- selected_lm_augment %>%
+  filter(.hat > 2*p/n & (.std.resid > 2 | .std.resid < - 2))  %>%
+  ggplot(aes(x = .hat, y = .cooksd)) +
+  geom_point(size = .8, color = "blue") +
+  geom_hline(yintercept = 0) +
+  gghighlight(.cooksd >= 1) 
+
+dfbetas_b0_plot <- selected_lm_augment %>%
+  filter(.hat > 2*p/n & (.std.resid > 2 | .std.resid < - 2))  %>%
+  ggplot(aes(x = 1:length(dfbetas[,1]), y = dfbetas[,1])) + 
+  geom_point(size = .8, color = "blue") +
+  geom_hline(yintercept = 0) +
+  gghighlight(abs(dfbetas[,1]) >=  2/sqrt(n)) +
+  xlab("Observation") + ylab("dfbetas of Intercept")
+
+dfbetas_b1_plot <- selected_lm_augment %>%
+  filter(.hat > 2*p/n & (.std.resid > 2 | .std.resid < - 2))  %>%
+  ggplot(aes(x = 1:length(dfbetas[,2]), y = dfbetas[,2])) + 
+  geom_point(size = .8, color = "blue") +
+  geom_hline(yintercept = 0) +
+  gghighlight(abs(dfbetas[,2]) >=  2/sqrt(n)) +
+  xlab("Observation") + ylab("dfbetas of b_gold_earned")
+
+dfbetas_b2_plot <- selected_lm_augment %>%
+  filter(.hat > 2*p/n & (.std.resid > 2 | .std.resid < - 2))  %>%
+  ggplot(aes(x = 1:length(dfbetas[,3]), y = dfbetas[,3])) + 
+  geom_point(size = .8, color = "blue") +
+  geom_hline(yintercept = 0) +
+  gghighlight(abs(dfbetas[,3]) >=  2/sqrt(n)) +
+  xlab("Observation") + ylab("dfbetas of b_kills")
+
+dfbetas_b3_plot <- selected_lm_augment %>%
+  filter(.hat > 2*p/n & (.std.resid > 2 | .std.resid < - 2))  %>%
+  ggplot(aes(x = 1:length(dfbetas[,4]), y = dfbetas[,4])) + 
+  geom_point(size = .8, color = "blue") +
+  geom_hline(yintercept = 0) +
+  gghighlight(abs(dfbetas[,4]) >=  2/sqrt(n)) +
+  xlab("Observation") + ylab("dfbetas of b_longest_time_spent_living")
+
+dfbetas_b4_plot <- selected_lm_augment %>%
+  filter(.hat > 2*p/n & (.std.resid > 2 | .std.resid < - 2))  %>%
+  ggplot(aes(x = 1:length(dfbetas[,5]), y = dfbetas[,5])) + 
+  geom_point(size = .8, color = "blue") +
+  geom_hline(yintercept = 0) +
+  gghighlight(abs(dfbetas[,5]) >=  2/sqrt(n)) +
+  xlab("Observation") + ylab("dfbetas of b_time_c_cing_others")
+
+
+# Output plots
+
+#dffitsplot + cooksdplot + dfbetas_b0_plot+ dfbetas_b1_plot + dfbetas_b2_plot + dfbetas_b3_plot + dfbetas_b4_plot
+
+# Of those cases that are outlying with respect to their Y values and their X values, which pass our cut-offs?
+outliers_prop_clone <- selected_lm_augment %>%
+  filter(.hat > 2*p/n & (.std.resid > 2 | .std.resid < - 2))
+
+cooksd_count <- 0
+dffits_count <- 0
+dfbetas_b0_count <- 0
+dfbetas_b1_count <- 0
+dfbetas_b2_count <- 0
+dfbetas_b3_count <- 0
+dfbetas_b4_count <- 0
+
+for (i in 1:nrow(outliers_prop_clone)) {
+  if (outliers_prop_clone$.cooksd[i] >= 1) {
+      cooksd_count <- cooksd_count + 1
+  }
+}
+
+for (i in 1:nrow(outliers_prop_clone)) {
+  if (abs(outliers_prop_clone$dffits[i]) >  2*sqrt(p/n)) {
+      dffits_count <- dffits_count + 1
+  }
+}
+
+for (i in 1:nrow(outliers_prop_clone)) {
+  if (abs(outliers_prop_clone$dfbetas[i,1]) >  2/sqrt(n)) {
+      dfbetas_b0_count <- dfbetas_b0_count + 1
+  }
+}
+
+for (i in 1:nrow(outliers_prop_clone)) {
+  if (abs(outliers_prop_clone$dfbetas[i,2]) >  2/sqrt(n)) {
+      dfbetas_b1_count <- dfbetas_b1_count + 1
+  }
+}
+
+for (i in 1:nrow(outliers_prop_clone)) {
+  if (abs(outliers_prop_clone$dfbetas[i,3]) >  2/sqrt(n)) {
+      dfbetas_b2_count <- dfbetas_b2_count + 1
+  }
+}
+
+for (i in 1:nrow(outliers_prop_clone)) {
+  if (abs(outliers_prop_clone$dfbetas[i,4]) >  2/sqrt(n)) {
+      dfbetas_b3_count <- dfbetas_b3_count + 1
+  }
+}
+
+for (i in 1:nrow(outliers_prop_clone)) {
+  if (abs(outliers_prop_clone$dfbetas[i,5]) >  2/sqrt(n)) {
+      dfbetas_b4_count <- dfbetas_b4_count + 1
+  }
+}
+
+overall_count <- 0
+
+for (i in 1:nrow(outliers_prop_clone)) {
+  if (outliers_prop_clone$.cooksd[i] >= 1 & abs(outliers_prop_clone$dffits[i]) >  2*sqrt(p/n) & abs(outliers_prop_clone$dfbetas[i,1]) >  2/sqrt(n) & abs(outliers_prop_clone$dfbetas[i,2]) >  2/sqrt(n) & abs(outliers_prop_clone$dfbetas[i,3]) >  2/sqrt(n) & abs(outliers_prop_clone$dfbetas[i,4]) >  2/sqrt(n) & abs(outliers_prop_clone$dfbetas[i,5]) >  2/sqrt(n)) {
+      overall_count <- overall_count + 1
+  }
+}
+```
+After identifying cases that are outlying with respect to their Y values and their X values, the next step is to ascertain whether or not these outlying cases are influential. A useful measure of the influence that case $i$ has on the fitted value $Y_i$ is given by $(DFFITS)_i$. The letters DF stand for the difference between the fitted value $Y_i$ for the $i$th case when all $n$ cases are used in fitting the regression function and the predicted value $Y_{i(i)}$ for the ith case obtained when the ith case is omitted in fitting the regression function. Of those cases that are outlying with respect to their Y values and their X values, `r dffits_count/nrow(outliers_prop_clone)*100`% of their $(DFFITS)_i$ values exceed our guideline of $2\sqrt{\frac{p}{n}}$ for a medium-size data set.
+
+Cook's distance measure, $D_i$, considers the influence of the $i$th case on all $n$ fitted values. Of those cases that are outlying with respect to their Y values and their X values, we consider `r cooksd_count/nrow(outliers_prop_clone)*100`% of the cases influential on the fit of the regression function because their $D_i$ values exceed or equal $1$.
+
+The DFBETAS value by its sign indicates whether inclusion of a case leads to an increase or a decrease in the estimated regression coefficient, and its absolute magnitude shows the size of the difference relative to the estimated standard deviation of the regression coefficient. A large absolute value of $(DFBETAS)_{k(i)}$ is indicative of a large impact of the $i$th case on the $k$th regression coefficient. Of those cases that are outlying with respect to their Y values and their X values, we consider `r dfbetas_b0_count/nrow(outliers_prop_clone)*100`% of the cases influential on $\beta_0$ because their $(DFBETAS)_{0(i)}$ values exceed $\frac{2}{\sqrt{n}}$. Likewise, we consider `r dfbetas_b1_count/nrow(outliers_prop_clone)*100`%, `r dfbetas_b2_count/nrow(outliers_prop_clone)*100`%, `r dfbetas_b3_count/nrow(outliers_prop_clone)*100`%, and `r dfbetas_b4_count/nrow(outliers_prop_clone)*100`% of the cases influential on $\beta_1,\beta_2, \beta_3, \beta_4$ because their $(DFBETAS)_{1(i)}, (DFBETAS)_{2(i)}, (DFBETAS)_{3(i)}, (DFBETAS)_{4(i)}$ values exceed $\frac{2}{\sqrt{n}}$, respectively. 
+
+Of those cases that are outlying with respect to their Y values and their X values, all three influence measures (DFFITS, Cook's distance, and DFBETAS) did not identify a particular case, seeing as the size of the collection of cases that exceed the threshold for all of these tests is `r overall_count`. Hence, the extent of the influence may not be large enough to call for consideration of remedial measures.
+
+# Interpretation of the Model
+Our model is of type $p - 1$ variables, where $p = 5$. We say $p - 1$ instead of $p$ because including the intercept there are $p$ parameters in need of estimation. There were four independent variables, `b_gold_earned, b_kills, b_longest_time_spent_living,` and `b_time_c_cing_others`. From the correlation matrix earlier, there seems to be a high correlation between `b_gold_earned` and `b_kills` which can indicate multicollinearity or that one of these variables can take the place of each other. To assess whether there really is multicollinearity we use the variance inflation factor. The variance inflation factor for each variable did not exceed our cutoff of 10. This is taken as an indication that multicollinearity may not be unduly influencing the least squares estimates. 
+```{r, echo=FALSE}
+# Evaluate Collinearity
+vif(selected_lm) # variance inflation factors
+```
+# Confidence and Prediction Intervals
+We can now choose to look at the confidence intervals for the mean and individual response at gold earned = `r median(log(lol10$b_gold_earned))`, which is the median of our possible values for $\log(\text{gold earned})$. We found that the confidence interval for the mean response and individual response is (`r predict(selected_lm, newdata = data.frame(b_kills= 34, b_gold_earned = 368654, b_time_c_cing_others = 216, b_longest_time_spent_living = 4392), interval = "confidence")[2]`, `r predict(selected_lm, newdata = data.frame(b_kills= 34, b_gold_earned = 368654, b_time_c_cing_others = 216, b_longest_time_spent_living = 4392), interval = "confidence")[3]`) and (`r predict(selected_lm, newdata = data.frame(b_kills= 34, b_gold_earned = 368654, b_time_c_cing_others = 216, b_longest_time_spent_living = 4392), interval = "prediction")[2]`, `r predict(selected_lm, newdata = data.frame(b_kills= 34, b_gold_earned = 368654, b_time_c_cing_others = 216, b_longest_time_spent_living = 4392), interval = "prediction")[3]`), respectively. This means that we are 95% confident that our true `b_total_damage_dealt` lies within this interval.
+
+```{r echo = FALSE, eval = FALSE}
+predict(selected_lm, newdata = data.frame(b_kills= 34, b_gold_earned = 368654, b_time_c_cing_others = 216, b_longest_time_spent_living = 4392), interval = "confidence")
+```
+
+```{r echo = FALSE, eval = FALSE}
+predict(selected_lm, newdata = data.frame(b_kills= 34, b_gold_earned = 368654, b_time_c_cing_others = 216, b_longest_time_spent_living = 4392), interval = "prediction")
+```
+# Summary
+Our final linear model is `r extract_eq(selected_lm, wrap = TRUE, terms_per_line = 2, intercept = "beta", use_coefs = TRUE)`. This satisfies our research question: Can we better understand the total damage dealt for the average Gold-ranked player on the blue team? We first assessed whether any feature engineering had to be performed or interaction variables were neccessary in our model. We found that based on Table B.6 in ALSM that no feature engineering was needed. Through a partial F-test, we found that no interaction variables provided additional significant information to our model. We then chose to construct a computational and statistical model. After comparing both models, we concluded that the statistical model was the best model for answering our question, according to the $R^2_{a,p}$ criterion. We then analyzed the test data for any outliers that could affect our model by using metrics such as: semistudentized residuals, studentized residuals, Cook's distance, dffits, dfbetas, and leverage. A test for multicollinearity was applied due to a high correlation between variables. The test indicated that multicollinearity may not be unduly influencing the least squares estimates. 
+
+![Variables and their descriptions](./Variables_and_their_descriptions_Project_3.pdf)
+
+# Bibliography {-}
+\setlength{\parindent}{-0.2in}
+\setlength{\leftskip}{0.2in}
+\noindent
+<div id="refs"></div>
