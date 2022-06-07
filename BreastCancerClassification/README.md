@@ -1,0 +1,1 @@
+Classification Project using Breast Cancer Data from Kaggle. Goals of the Project include creating a high accuracy and high precision model to predict presence of malignant tumors and indentifying important features for the model.
